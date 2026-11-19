@@ -252,8 +252,18 @@ fn stop_run(state: State<'_, AppState>) -> std::result::Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn configure_linux_rendering() {
+    // WebKitGTK DMABUF/Wayland rendering is broken under niri; X11 is the supported path.
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    std::env::set_var("GDK_BACKEND", "x11");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    configure_linux_rendering();
+
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
