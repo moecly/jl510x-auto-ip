@@ -1,0 +1,10 @@
+[package]
+name = "auto-ip"
+version = "0.1.0"
+edition = "2021"
+description = "Send JL510x loop-detection frames that assign TTL-based IP addresses"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+pnet = "0.35"
