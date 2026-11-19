@@ -226,7 +226,8 @@ fn main() -> Result<()> {
             }
         }
         stop.store(true, Ordering::Relaxed);
-        let _ = handle.join();
+        // WinPcap's receiver has no read timeout; detach instead of join.
+        drop(handle);
         print_replies(&replies);
     }
 
