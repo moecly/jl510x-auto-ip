@@ -26,6 +26,7 @@
             clippy
             pkg-config
             libpcap
+            dbus
             gtk3
             webkitgtk_4_1
             libsoup_3
