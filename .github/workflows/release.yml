@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_VERSION: ${{ github.ref_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x64
+            archive: release/*.tar.gz
+          - os: windows-latest
+            platform: windows-x64
+            archive: release/*.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libpcap-dev libdbus-1-dev libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install Npcap SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP "npcap-sdk.zip"
+          $sdk = Join-Path $env:RUNNER_TEMP "npcap-sdk"
+          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.17.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $sdk
+          "LIB=$env:LIB;$sdk\Lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            src-tauri -> target
+
+      - name: Build CLI
+        run: cargo build --release --locked
+
+      - name: Build GUI
+        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          name="auto-ip-${RELEASE_VERSION}-linux-x64"
+          mkdir -p "release/${name}"
+          cp target/release/auto-ip "release/${name}/"
+          cp src-tauri/target/release/auto-ip-gui "release/${name}/"
+          cat > "release/${name}/README.txt" <<'EOF'
+          Auto IP (Linux x64)
+
+          Requirements
+          ------------
+          - libpcap at runtime: install libpcap0.8 (or the equivalent package).
+          - GUI: WebKitGTK 4.1, GTK 3, libdbus, and an X11 display.
+            The GUI sets WEBKIT_DISABLE_DMABUF_RENDERER=1 and GDK_BACKEND=x11
+            automatically on Linux.
+
+          Permissions
+          -----------
+          Sending raw Ethernet frames requires CAP_NET_RAW:
+
+              sudo setcap cap_net_raw+ep auto-ip
+              sudo setcap cap_net_raw+ep auto-ip-gui
+
+          Run
+          ---
+              ./auto-ip --list
+              ./auto-ip -i eno1 --base-ip 192.168.1.10 --count 1
+              ./auto-ip-gui
+
+          Ubuntu 24.04 build: use the matching runtime libraries from that
+          release or newer.
+          EOF
+          tar -C release -czf "release/${name}.tar.gz" "${name}"
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "auto-ip-$env:RELEASE_VERSION-windows-x64"
+          $dir = Join-Path "release" $name
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/release/auto-ip.exe" $dir
+          Copy-Item "src-tauri/target/release/auto-ip-gui.exe" $dir
+          @"
+          Auto IP (Windows x64)
+
+          Requirements
+          ------------
+          - Install Npcap x64 and run as Administrator.
+          - GUI needs the WebView2 runtime (normally included with Windows 10/11).
+          - Npcap is not bundled in this archive.
+
+          Run
+          ---
+              auto-ip.exe --list
+              auto-ip.exe -i "\Device\NPF_{...}" --base-ip 192.168.1.10 --count 1
+              auto-ip-gui.exe
+
+          The GUI has no console window. The CLI must be run from cmd/PowerShell.
+          "@ | Set-Content -Path (Join-Path $dir "README.txt") -Encoding utf8
+          Compress-Archive -Path (Join-Path $dir "*") -DestinationPath "release/$name.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-ip-${{ matrix.platform }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

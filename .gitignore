@@ -2,3 +2,5 @@
 result
 target/
 src-tauri/gen/
+dist/
+release/
