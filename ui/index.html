@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Auto IP</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">AIP</div>
+        <div>
+          <h1>Auto IP</h1>
+          <p>JL510x 菊花链地址分配</p>
+        </div>
+      </div>
+      <div class="app-state" id="appState">
+        <span class="dot"></span>
+        <span id="appStateText">正在初始化…</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel config-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">TARGET</p>
+            <h2>运行参数</h2>
+          </div>
+          <span class="protocol-pill">0x9988 / 0x9989</span>
+        </div>
+
+        <form id="configForm" novalidate>
+          <div class="field field-wide">
+            <label for="interface">网卡</label>
+            <div class="input-row">
+              <select id="interface" aria-describedby="interfaceHint"></select>
+              <button type="button" class="icon-button" id="refreshInterfaces" title="刷新网卡列表">
+                刷新
+              </button>
+            </div>
+            <p class="hint" id="interfaceHint">选择连接到菊花链的网卡，需要管理员权限。</p>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="baseIp">起始 IP</label>
+              <input id="baseIp" type="text" inputmode="decimal" value="192.168.1.10" spellcheck="false" />
+            </div>
+            <div class="field">
+              <label for="netmask">子网掩码</label>
+              <input id="netmask" type="text" inputmode="decimal" value="255.255.255.0" spellcheck="false" />
+            </div>
+            <div class="field">
+              <label for="gateway">网关</label>
+              <input id="gateway" type="text" inputmode="decimal" value="192.168.1.1" spellcheck="false" />
+            </div>
+            <div class="field">
+              <label for="ttl">TTL</label>
+              <input id="ttl" type="number" value="200" min="2" max="65535" />
+            </div>
+            <div class="field">
+              <label for="indexOffset">索引模式</label>
+              <select id="indexOffset">
+                <option value="0">0 · 交换机先递减</option>
+                <option value="1">1 · 交换机后递减</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="count">发送帧数 <span class="unit">0 = 持续</span></label>
+              <input id="count" type="number" value="1" min="0" />
+            </div>
+            <div class="field">
+              <label for="intervalMs">帧间隔 <span class="unit">ms</span></label>
+              <input id="intervalMs" type="number" value="1000" min="0" />
+            </div>
+            <div class="field">
+              <label for="replyTimeoutMs">回包等待 <span class="unit">ms</span></label>
+              <input id="replyTimeoutMs" type="number" value="1500" min="0" />
+            </div>
+          </div>
+
+          <details class="advanced">
+            <summary>高级选项</summary>
+            <div class="field-grid">
+              <div class="field">
+                <label for="sourceMac">源 MAC <span class="unit">可选</span></label>
+                <input id="sourceMac" type="text" placeholder="使用网卡 MAC" spellcheck="false" />
+              </div>
+              <div class="field">
+                <label for="mapCount">映射行数</label>
+                <input id="mapCount" type="number" value="16" min="0" max="254" />
+              </div>
+            </div>
+          </details>
+
+          <div class="actions">
+            <button type="submit" class="primary" id="runButton">发送并接收回包</button>
+            <button type="button" class="danger-ghost" id="stopButton" disabled>停止</button>
+            <button type="button" class="ghost" id="previewButton">预览帧</button>
+          </div>
+        </form>
+
+        <div class="mapping-block">
+          <div class="section-title">
+            <h3>IP 映射</h3>
+            <span class="hint" id="mappingHint">基于起始 IP</span>
+          </div>
+          <div class="mapping-scroll">
+            <table class="mapping-table">
+              <thead>
+                <tr><th>板号</th><th>预期 IP</th></tr>
+              </thead>
+              <tbody id="mappingBody">
+                <tr><td colspan="2" class="empty-cell">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <section class="status-card" id="statusCard">
+          <div class="status-main">
+            <span class="status-orb" id="statusOrb" aria-hidden="true"></span>
+            <div>
+              <p class="eyebrow">RUN STATUS</p>
+              <h2 id="statusTitle">就绪</h2>
+              <p id="statusDetail">选择网卡并填写参数，然后发送请求。</p>
+            </div>
+          </div>
+          <div class="metrics">
+            <div class="metric">
+              <span>已发送</span>
+              <strong id="sentCount">0</strong>
+            </div>
+            <div class="metric">
+              <span>回包板数</span>
+              <strong id="boardCount">0</strong>
+            </div>
+            <div class="metric">
+              <span>网卡</span>
+              <strong class="metric-text" id="activeInterface">—</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel replies-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">BOARDS</p>
+              <h2>板卡回包</h2>
+            </div>
+            <span class="hint" id="replyHint">等待运行</span>
+          </div>
+          <div class="table-wrap">
+            <table class="reply-table">
+              <thead>
+                <tr>
+                  <th>板号</th>
+                  <th>MAC</th>
+                  <th>旧 IP</th>
+                  <th>新 IP</th>
+                  <th>TTL</th>
+                  <th>状态</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody id="replyBody">
+                <tr><td colspan="7" class="empty-cell">暂无回包</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="lower-grid">
+          <section class="panel log-panel">
+            <div class="panel-heading compact">
+              <div>
+                <p class="eyebrow">EVENTS</p>
+                <h2>运行日志</h2>
+              </div>
+              <button type="button" class="text-button" id="clearLog">清空</button>
+            </div>
+            <ol class="log-list" id="logList" aria-live="polite"></ol>
+          </section>
+
+          <section class="panel frame-panel">
+            <div class="panel-heading compact">
+              <div>
+                <p class="eyebrow">FRAME</p>
+                <h2>帧预览</h2>
+              </div>
+              <span class="hint" id="frameMeta">未生成</span>
+            </div>
+            <pre class="frame-hex" id="frameHex">点击“预览帧”查看 60 字节请求帧。</pre>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <script src="main.js"></script>
+  </body>
+</html>

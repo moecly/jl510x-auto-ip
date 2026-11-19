@@ -26,6 +26,12 @@
             clippy
             pkg-config
             libpcap
+            gtk3
+            webkitgtk_4_1
+            libsoup_3
+            openssl
+            librsvg
+            libayatana-appindicator
           ];
         };
       });

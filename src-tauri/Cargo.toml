@@ -1,0 +1,15 @@
+[package]
+name = "auto-ip-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri GUI for the JL510x TTL-based IP auto-assignment tool"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+auto-ip = { path = ".." }
+anyhow = "1"
+pnet = "0.35"
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }

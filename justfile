@@ -49,6 +49,22 @@ cargo-check:
 test:
     cargo test
 
+# Build the Tauri GUI.
+gui-build:
+    cargo build --manifest-path src-tauri/Cargo.toml --release
+
+# Run the Tauri GUI.
+gui:
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 cargo run --manifest-path src-tauri/Cargo.toml
+
+# Grant CAP_NET_RAW to the release GUI binary.
+gui-setcap: gui-build
+    sudo setcap cap_net_raw+ep src-tauri/target/release/auto-ip-gui
+
+# Type-check the Tauri GUI.
+gui-check:
+    cargo check --manifest-path src-tauri/Cargo.toml
+
 # Format Rust sources.
 rust-fmt:
     cargo fmt
