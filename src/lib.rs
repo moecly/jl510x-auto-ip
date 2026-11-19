@@ -251,7 +251,8 @@ pub fn dedupe_replies(replies: &[Reply]) -> Vec<Reply> {
     let mut boards: HashMap<[u8; 6], Reply> = HashMap::new();
     for reply in replies {
         let entry = boards.entry(reply.mac).or_insert(*reply);
-        if entry.status == 4 || reply.status != 4 {
+        // Keep the first terminal reply; repeated requests report unchanged afterwards.
+        if entry.status == 4 && reply.status != 4 {
             *entry = *reply;
         }
     }
@@ -497,6 +498,36 @@ mod tests {
 
         let crc = u16::from_be_bytes([frame[48], frame[49]]);
         assert_eq!(crc, crc16_ccitt(&frame[18..48]));
+    }
+
+    fn test_reply(status: u8, old_ip: Ipv4Addr, new_ip: Ipv4Addr) -> Reply {
+        Reply {
+            mac: [0x6e, 0x7a, 0xf8, 0xd3, 0x19, 0x6a],
+            status,
+            reason: 0,
+            index: 1,
+            ttl: 199,
+            old_ip,
+            new_ip,
+        }
+    }
+
+    #[test]
+    fn dedupe_keeps_first_terminal_reply() {
+        let old_ip = Ipv4Addr::new(192, 168, 3, 66);
+        let new_ip = Ipv4Addr::new(192, 168, 3, 100);
+        let replies = vec![
+            test_reply(4, old_ip, new_ip),
+            test_reply(0, old_ip, new_ip),
+            test_reply(1, new_ip, new_ip),
+            test_reply(1, new_ip, new_ip),
+        ];
+
+        let boards = dedupe_replies(&replies);
+        assert_eq!(boards.len(), 1);
+        assert_eq!(boards[0].status, 0);
+        assert_eq!(boards[0].old_ip, old_ip);
+        assert_eq!(boards[0].new_ip, new_ip);
     }
 
     #[test]
