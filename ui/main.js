@@ -257,6 +257,14 @@ async function loadInterfaces() {
       : "选择连接到菊花链的网卡，需要管理员权限。";
     log(`发现 ${list.length} 个网卡`, "ok");
   } catch (error) {
+    elements.interfaceSelect.replaceChildren();
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "网卡读取失败";
+    elements.interfaceSelect.append(option);
+    currentInterface = "";
+    elements.activeInterface.textContent = "—";
+    elements.interfaceHint.textContent = "请先解决网卡依赖后点击刷新。";
     log(`读取网卡失败：${String(error)}`, "error");
     setRunState("error", "无法读取网卡", String(error), "网卡读取失败");
   } finally {

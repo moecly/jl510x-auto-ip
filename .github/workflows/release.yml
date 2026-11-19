@@ -119,9 +119,22 @@ jobs:
 
           Requirements
           ------------
-          - Install Npcap x64 and run as Administrator.
+          - Npcap x64 must be installed. The driver and Packet.dll/wpcap.dll are
+            installed by Npcap; copying only the two DLLs next to this program
+            is not enough. Delete any Packet.dll/wpcap.dll in this folder before
+            running; stale local DLLs override the installed Npcap version.
+          - The GUI asks for Administrator through UAC. The CLI must be started
+            from an Administrator cmd/PowerShell.
           - GUI needs the WebView2 runtime (normally included with Windows 10/11).
-          - Npcap is not bundled in this archive.
+
+          First run
+          ---------
+          If Npcap is not installed, run:
+
+              powershell -ExecutionPolicy Bypass -File .\install-npcap.ps1
+
+          Then launch auto-ip-gui.exe and accept the UAC prompt. Npcap is not
+          bundled in this archive; the script downloads it from npcap.com.
 
           Run
           ---
@@ -131,6 +144,18 @@ jobs:
 
           The GUI has no console window. The CLI must be run from cmd/PowerShell.
           "@ | Set-Content -Path (Join-Path $dir "README.txt") -Encoding utf8
+          @'
+          $ErrorActionPreference = "Stop"
+          $url = "https://npcap.com/dist/npcap-1.90.exe"
+          $installer = Join-Path $env:TEMP "npcap-1.90.exe"
+          if (-not (Test-Path $installer)) {
+              Write-Host "Downloading Npcap..."
+              Invoke-WebRequest -Uri $url -OutFile $installer
+          }
+          Write-Host "Starting Npcap installer (UAC required)..."
+          Start-Process -FilePath $installer -Verb RunAs -Wait
+          Write-Host "Npcap installer finished. Reopen Auto IP."
+          '@ | Set-Content -Path (Join-Path $dir "install-npcap.ps1") -Encoding utf8
           Compress-Archive -Path (Join-Path $dir "*") -DestinationPath "release/$name.zip"
 
       - name: Upload release archive

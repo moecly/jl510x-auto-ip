@@ -142,7 +142,7 @@ enum RunEventView {
 }
 
 #[tauri::command]
-fn list_interfaces() -> Vec<InterfaceView> {
+fn list_interfaces() -> std::result::Result<Vec<InterfaceView>, String> {
     let mut interfaces: Vec<InterfaceView> = pnet::datalink::interfaces()
         .into_iter()
         .map(|interface| {
@@ -158,13 +158,24 @@ fn list_interfaces() -> Vec<InterfaceView> {
         })
         .collect();
 
+    if interfaces.is_empty() {
+        return Err(if cfg!(windows) {
+            "未找到网卡。请先安装 x64 Npcap 驱动；只复制 Packet.dll/wpcap.dll 不够，\
+             程序目录里的旧 DLL 还会覆盖系统版本。安装后删除这两个本地 DLL，\
+             重新打开本程序并允许管理员权限。\nhttps://npcap.com/#download"
+                .to_string()
+        } else {
+            "未找到网卡；检查 libpcap 和当前用户权限。".to_string()
+        });
+    }
+
     interfaces.sort_by(|a, b| {
         b.is_up
             .cmp(&a.is_up)
             .then(a.is_loopback.cmp(&b.is_loopback))
             .then(a.name.cmp(&b.name))
     });
-    interfaces
+    Ok(interfaces)
 }
 
 #[tauri::command]
