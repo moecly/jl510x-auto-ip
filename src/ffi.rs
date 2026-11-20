@@ -1,19 +1,16 @@
-// Safety contracts are documented in include/auto_ip.h.
+// C API users only need config + auto_ip_run; the C header documents ownership.
 #![allow(clippy::missing_safety_doc)]
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{c_char, c_int, CStr, CString};
 use std::net::Ipv4Addr;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use crate::{RunEvent, RunOptions, RunSummary};
+use crate::{RunOptions, RunSummary};
 
 pub const AUTO_IP_ABI_VERSION: u32 = 1;
-pub const AUTO_IP_EVENT_SENT: u32 = 0;
-pub const AUTO_IP_EVENT_REPLY: u32 = 1;
 
 static DEFAULT_BASE_IP: &[u8] = b"192.168.1.10\0";
 static DEFAULT_NETMASK: &[u8] = b"255.255.255.0\0";
@@ -31,20 +28,6 @@ pub struct AutoIpReply {
     pub new_ip: u32,
 }
 
-impl AutoIpReply {
-    const fn zero() -> Self {
-        Self {
-            mac: [0; 6],
-            status: 0,
-            reason: 0,
-            index: 0,
-            ttl: 0,
-            old_ip: 0,
-            new_ip: 0,
-        }
-    }
-}
-
 #[repr(C)]
 pub struct AutoIpConfig {
     pub interface_name: *const c_char,
@@ -59,15 +42,6 @@ pub struct AutoIpConfig {
     pub interval_ms: u64,
     pub reply_timeout_ms: u64,
 }
-
-#[repr(C)]
-pub struct AutoIpEvent {
-    pub kind: u32,
-    pub sent: u32,
-    pub reply: AutoIpReply,
-}
-
-pub type AutoIpEventCallback = Option<unsafe extern "C" fn(*const AutoIpEvent, *mut c_void)>;
 
 #[repr(C)]
 pub struct AutoIpInterface {
@@ -93,34 +67,12 @@ pub struct AutoIpInterfaceList {
     entries: Vec<InterfaceEntry>,
 }
 
-pub struct AutoIpRun {
-    stop: Arc<AtomicBool>,
-    worker: Mutex<Option<JoinHandle<anyhow::Result<RunSummary>>>>,
-}
-
-pub struct AutoIpSummary {
+pub struct AutoIpResult {
     interface: CString,
     source_mac: CString,
     sent: u32,
     replies: Vec<AutoIpReply>,
     boards: Vec<AutoIpReply>,
-}
-
-pub struct AutoIpPreview {
-    interface: CString,
-    source_mac: CString,
-    frame: [u8; crate::FRAME_LEN],
-    nonce: u32,
-}
-
-struct SendUserData(*mut c_void);
-
-unsafe impl Send for SendUserData {}
-
-impl SendUserData {
-    fn ptr(&self) -> *mut c_void {
-        self.0
-    }
 }
 
 fn c_string(text: impl AsRef<str>) -> CString {
@@ -190,51 +142,14 @@ fn reply_to_ffi(reply: crate::Reply) -> AutoIpReply {
     }
 }
 
-fn event_to_ffi(event: RunEvent) -> AutoIpEvent {
-    match event {
-        RunEvent::Sent { sent } => AutoIpEvent {
-            kind: AUTO_IP_EVENT_SENT,
-            sent,
-            reply: AutoIpReply::zero(),
-        },
-        RunEvent::Reply(reply) => AutoIpEvent {
-            kind: AUTO_IP_EVENT_REPLY,
-            sent: 0,
-            reply: reply_to_ffi(reply),
-        },
+fn result_from_summary(summary: RunSummary) -> AutoIpResult {
+    AutoIpResult {
+        interface: c_string(summary.interface),
+        source_mac: c_string(summary.source_mac.to_string()),
+        sent: summary.sent,
+        replies: summary.replies.into_iter().map(reply_to_ffi).collect(),
+        boards: summary.boards.into_iter().map(reply_to_ffi).collect(),
     }
-}
-
-unsafe fn run_start_impl(
-    config: *const AutoIpConfig,
-    callback: AutoIpEventCallback,
-    user_data: *mut c_void,
-    out_run: *mut *mut AutoIpRun,
-) -> Result<*mut AutoIpRun, String> {
-    if out_run.is_null() {
-        return Err("out_run is null".to_string());
-    }
-    let options = config_to_options(config)?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let worker_stop = stop.clone();
-    let user = SendUserData(user_data);
-
-    let worker = thread::Builder::new()
-        .name("auto-ip-run".to_string())
-        .spawn(move || {
-            crate::run(&options, worker_stop, |event| {
-                if let Some(callback) = callback {
-                    let ffi_event = event_to_ffi(event);
-                    unsafe { callback(&ffi_event, user.ptr()) };
-                }
-            })
-        })
-        .map_err(|error| format!("spawn run thread: {error}"))?;
-
-    Ok(Box::into_raw(Box::new(AutoIpRun {
-        stop,
-        worker: Mutex::new(Some(worker)),
-    })))
 }
 
 #[no_mangle]
@@ -361,129 +276,29 @@ pub unsafe extern "C" fn auto_ip_interface_list_free(list: *mut AutoIpInterfaceL
     }
 }
 
-unsafe fn preview_impl(config: *const AutoIpConfig) -> Result<AutoIpPreview, String> {
-    let options = config_to_options(config)?;
-    let prepared = crate::prepare(&options).map_err(|error| format!("{error:#}"))?;
-    Ok(AutoIpPreview {
-        interface: c_string(prepared.interface.name),
-        source_mac: c_string(prepared.source_mac.to_string()),
-        frame: prepared.frame,
-        nonce: prepared.nonce,
-    })
-}
-
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_preview_build(
+pub unsafe extern "C" fn auto_ip_run(
     config: *const AutoIpConfig,
-    out_preview: *mut *mut AutoIpPreview,
+    out_result: *mut *mut AutoIpResult,
     error: *mut *mut c_char,
 ) -> c_int {
-    if !out_preview.is_null() {
-        *out_preview = ptr::null_mut();
+    if !out_result.is_null() {
+        *out_result = ptr::null_mut();
     }
     clear_error(error);
-    if out_preview.is_null() {
-        set_error(error, "out_preview is null");
-        return -1;
-    }
-
-    match catch_unwind(AssertUnwindSafe(|| preview_impl(config))) {
-        Ok(Ok(preview)) => {
-            *out_preview = Box::into_raw(Box::new(preview));
-            0
-        }
-        Ok(Err(message)) => {
-            set_error(error, message);
-            -1
-        }
-        Err(_) => {
-            set_error(error, "panic while preparing frame");
-            -1
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_preview_interface(preview: *const AutoIpPreview) -> *const c_char {
-    preview
-        .as_ref()
-        .map_or(ptr::null(), |preview| preview.interface.as_ptr())
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_preview_source_mac(
-    preview: *const AutoIpPreview,
-) -> *const c_char {
-    preview
-        .as_ref()
-        .map_or(ptr::null(), |preview| preview.source_mac.as_ptr())
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_preview_frame(preview: *const AutoIpPreview) -> *const u8 {
-    preview
-        .as_ref()
-        .map_or(ptr::null(), |preview| preview.frame.as_ptr())
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_preview_frame_len(_preview: *const AutoIpPreview) -> usize {
-    crate::FRAME_LEN
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_preview_nonce(preview: *const AutoIpPreview) -> u32 {
-    preview.as_ref().map_or(0, |preview| preview.nonce)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_preview_free(preview: *mut AutoIpPreview) {
-    if !preview.is_null() {
-        drop(Box::from_raw(preview));
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_parse_reply(
-    frame: *const u8,
-    len: usize,
-    nonce: u32,
-    out_reply: *mut AutoIpReply,
-) -> c_int {
-    if frame.is_null() || out_reply.is_null() || len > isize::MAX as usize {
+    if out_result.is_null() {
+        set_error(error, "out_result is null");
         return -1;
     }
 
     match catch_unwind(AssertUnwindSafe(|| {
-        let frame = std::slice::from_raw_parts(frame, len);
-        crate::parse_reply(frame, nonce)
+        let options = config_to_options(config)?;
+        crate::run(&options, Arc::new(AtomicBool::new(false)), |_| {})
+            .map(result_from_summary)
+            .map_err(|error| format!("{error:#}"))
     })) {
-        Ok(Some(reply)) => {
-            *out_reply = reply_to_ffi(reply);
-            0
-        }
-        _ => -1,
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_run_start(
-    config: *const AutoIpConfig,
-    callback: AutoIpEventCallback,
-    user_data: *mut c_void,
-    out_run: *mut *mut AutoIpRun,
-    error: *mut *mut c_char,
-) -> c_int {
-    if !out_run.is_null() {
-        *out_run = ptr::null_mut();
-    }
-    clear_error(error);
-
-    match catch_unwind(AssertUnwindSafe(|| {
-        run_start_impl(config, callback, user_data, out_run)
-    })) {
-        Ok(Ok(run)) => {
-            *out_run = run;
+        Ok(Ok(result)) => {
+            *out_result = Box::into_raw(Box::new(result));
             0
         }
         Ok(Err(message)) => {
@@ -491,166 +306,48 @@ pub unsafe extern "C" fn auto_ip_run_start(
             -1
         }
         Err(_) => {
-            set_error(error, "panic while starting run");
-            -1
-        }
-    }
-}
-
-unsafe fn run_wait_impl(
-    run: *mut AutoIpRun,
-    out_summary: *mut *mut AutoIpSummary,
-) -> Result<*mut AutoIpSummary, String> {
-    if run.is_null() {
-        return Err("run is null".to_string());
-    }
-    if out_summary.is_null() {
-        return Err("out_summary is null".to_string());
-    }
-
-    let handle = {
-        let mut worker = (*run)
-            .worker
-            .lock()
-            .map_err(|_| "run handle is poisoned".to_string())?;
-        worker
-            .take()
-            .ok_or_else(|| "run has already been waited for".to_string())?
-    };
-
-    let summary = handle
-        .join()
-        .map_err(|_| "run thread panicked".to_string())?
-        .map_err(|error| format!("{error:#}"))?;
-
-    Ok(Box::into_raw(Box::new(AutoIpSummary {
-        interface: c_string(summary.interface),
-        source_mac: c_string(summary.source_mac.to_string()),
-        sent: summary.sent,
-        replies: summary.replies.into_iter().map(reply_to_ffi).collect(),
-        boards: summary.boards.into_iter().map(reply_to_ffi).collect(),
-    })))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_run_wait(
-    run: *mut AutoIpRun,
-    out_summary: *mut *mut AutoIpSummary,
-    error: *mut *mut c_char,
-) -> c_int {
-    if !out_summary.is_null() {
-        *out_summary = ptr::null_mut();
-    }
-    clear_error(error);
-
-    match catch_unwind(AssertUnwindSafe(|| run_wait_impl(run, out_summary))) {
-        Ok(Ok(summary)) => {
-            *out_summary = summary;
-            0
-        }
-        Ok(Err(message)) => {
-            set_error(error, message);
-            -1
-        }
-        Err(_) => {
-            set_error(error, "panic while waiting for run");
+            set_error(error, "panic while running");
             -1
         }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_run_stop(run: *mut AutoIpRun) {
-    if let Some(run) = run.as_ref() {
-        run.stop.store(true, Ordering::Relaxed);
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_run_free(run: *mut AutoIpRun) {
-    if run.is_null() {
-        return;
-    }
-    let run_ref = &*run;
-    run_ref.stop.store(true, Ordering::Relaxed);
-    let worker = run_ref
-        .worker
-        .lock()
-        .ok()
-        .and_then(|mut worker| worker.take());
-    if let Some(worker) = worker {
-        let _ = worker.join();
-    }
-    drop(Box::from_raw(run));
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_run_blocking(
-    config: *const AutoIpConfig,
-    callback: AutoIpEventCallback,
-    user_data: *mut c_void,
-    out_summary: *mut *mut AutoIpSummary,
-    error: *mut *mut c_char,
-) -> c_int {
-    if !out_summary.is_null() {
-        *out_summary = ptr::null_mut();
-    }
-    clear_error(error);
-    if out_summary.is_null() {
-        set_error(error, "out_summary is null");
-        return -1;
-    }
-
-    let mut run = ptr::null_mut();
-    let mut status = auto_ip_run_start(config, callback, user_data, &mut run, error);
-    if status == 0 {
-        status = auto_ip_run_wait(run, out_summary, error);
-    }
-    auto_ip_run_free(run);
-    status
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_interface(summary: *const AutoIpSummary) -> *const c_char {
-    summary
+pub unsafe extern "C" fn auto_ip_result_interface(result: *const AutoIpResult) -> *const c_char {
+    result
         .as_ref()
-        .map_or(ptr::null(), |summary| summary.interface.as_ptr())
+        .map_or(ptr::null(), |result| result.interface.as_ptr())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_source_mac(
-    summary: *const AutoIpSummary,
-) -> *const c_char {
-    summary
+pub unsafe extern "C" fn auto_ip_result_source_mac(result: *const AutoIpResult) -> *const c_char {
+    result
         .as_ref()
-        .map_or(ptr::null(), |summary| summary.source_mac.as_ptr())
+        .map_or(ptr::null(), |result| result.source_mac.as_ptr())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_sent(summary: *const AutoIpSummary) -> u32 {
-    summary.as_ref().map_or(0, |summary| summary.sent)
+pub unsafe extern "C" fn auto_ip_result_sent(result: *const AutoIpResult) -> u32 {
+    result.as_ref().map_or(0, |result| result.sent)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_reply_count(summary: *const AutoIpSummary) -> usize {
-    summary.as_ref().map_or(0, |summary| summary.replies.len())
+pub unsafe extern "C" fn auto_ip_result_reply_count(result: *const AutoIpResult) -> usize {
+    result.as_ref().map_or(0, |result| result.replies.len())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_board_count(summary: *const AutoIpSummary) -> usize {
-    summary.as_ref().map_or(0, |summary| summary.boards.len())
+pub unsafe extern "C" fn auto_ip_result_board_count(result: *const AutoIpResult) -> usize {
+    result.as_ref().map_or(0, |result| result.boards.len())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_reply(
-    summary: *const AutoIpSummary,
+pub unsafe extern "C" fn auto_ip_result_reply(
+    result: *const AutoIpResult,
     index: usize,
     out_reply: *mut AutoIpReply,
 ) -> c_int {
-    let Some(reply) = summary
-        .as_ref()
-        .and_then(|summary| summary.replies.get(index))
-    else {
+    let Some(reply) = result.as_ref().and_then(|result| result.replies.get(index)) else {
         return -1;
     };
     if out_reply.is_null() {
@@ -661,15 +358,12 @@ pub unsafe extern "C" fn auto_ip_summary_reply(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_board(
-    summary: *const AutoIpSummary,
+pub unsafe extern "C" fn auto_ip_result_board(
+    result: *const AutoIpResult,
     index: usize,
     out_reply: *mut AutoIpReply,
 ) -> c_int {
-    let Some(reply) = summary
-        .as_ref()
-        .and_then(|summary| summary.boards.get(index))
-    else {
+    let Some(reply) = result.as_ref().and_then(|result| result.boards.get(index)) else {
         return -1;
     };
     if out_reply.is_null() {
@@ -680,9 +374,9 @@ pub unsafe extern "C" fn auto_ip_summary_board(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn auto_ip_summary_free(summary: *mut AutoIpSummary) {
-    if !summary.is_null() {
-        drop(Box::from_raw(summary));
+pub unsafe extern "C" fn auto_ip_result_free(result: *mut AutoIpResult) {
+    if !result.is_null() {
+        drop(Box::from_raw(result));
     }
 }
 
@@ -696,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn config_init_sets_defaults() {
+    fn config_init_sets_cli_defaults() {
         let mut config = AutoIpConfig {
             interface_name: ptr::null(),
             source_mac: ptr::null(),
@@ -713,11 +407,13 @@ mod tests {
         unsafe { auto_ip_config_init(&mut config) };
         assert_eq!(config.ttl, 200);
         assert_eq!(config.count, 1);
+        assert_eq!(config.interval_ms, 1000);
+        assert_eq!(config.reply_timeout_ms, 1500);
         assert!(!config.base_ip.is_null());
     }
 
     #[test]
-    fn invalid_ttl_is_rejected_before_spawning() {
+    fn invalid_ttl_is_rejected() {
         let mut config = AutoIpConfig {
             interface_name: ptr::null(),
             source_mac: ptr::null(),
@@ -734,12 +430,11 @@ mod tests {
         unsafe { auto_ip_config_init(&mut config) };
         config.ttl = 1;
 
-        let mut run = ptr::null_mut();
+        let mut result = ptr::null_mut();
         let mut error = ptr::null_mut();
-        let status =
-            unsafe { auto_ip_run_start(&config, None, ptr::null_mut(), &mut run, &mut error) };
+        let status = unsafe { auto_ip_run(&config, &mut result, &mut error) };
         assert_eq!(status, -1);
-        assert!(run.is_null());
+        assert!(result.is_null());
         assert!(!error.is_null());
         unsafe { auto_ip_string_free(error) };
     }

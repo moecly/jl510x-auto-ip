@@ -9,7 +9,7 @@ JL510x 菊花链的 TTL 分配 IP 工具。CLI 与 Tauri 2 GUI 共用协议实�
 - `src-tauri/`：Tauri 2 GUI 后端；网卡枚举、运行线程、事件发送。
 - `ui/`：纯静态前端，无 npm 构建。
 - `src/ffi.rs`：C ABI，导出 `auto_ip_*` 符号；`include/auto_ip.h` 是配套头文件。
-- `.github/workflows/release.yml`：`v*` tag 触发 Linux/Windows 构建并发布 Release，包含 CLI、GUI 和 C 库。
+- `.github/workflows/release.yml`：`v*` tag 触发 Linux/Windows 构建并发布 Release（CLI/GUI）。
 
 ## 常用命令
 
@@ -18,6 +18,7 @@ cargo test
 nix develop --command just gui-build
 nix develop --command just gui
 # C 库产物：target/release/libauto_ip.so / libauto_ip.a
+# 头文件：include/auto_ip.h
 cargo build --release
 ```
 

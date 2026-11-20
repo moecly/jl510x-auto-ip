@@ -77,9 +77,6 @@ jobs:
           mkdir -p "release/${name}"
           cp target/release/auto-ip "release/${name}/"
           cp src-tauri/target/release/auto-ip-gui "release/${name}/"
-          cp target/release/libauto_ip.so target/release/libauto_ip.a "release/${name}/"
-          mkdir -p "release/${name}/include"
-          cp include/auto_ip.h "release/${name}/include/"
           cat > "release/${name}/README.txt" <<'EOF'
           Auto IP (Linux x64)
 
@@ -89,19 +86,6 @@ jobs:
           - GUI: WebKitGTK 4.1, GTK 3, libdbus, and an X11 display.
             The GUI sets WEBKIT_DISABLE_DMABUF_RENDERER=1 and GDK_BACKEND=x11
             automatically on Linux.
-
-          C API
-          -----
-              libauto_ip.so       shared library
-              libauto_ip.a        static library
-              include/auto_ip.h   C header
-
-              cc app.c -Iinclude -L. -lauto_ip -lpcap
-              LD_LIBRARY_PATH=. ./app
-              # static: cc app.c -Iinclude libauto_ip.a -lpcap -ldl -lpthread -lm
-
-          The C API exports interface enumeration, preview/build-frame, raw
-          reply parsing, and the run/callback/summary lifecycle.
 
           Permissions
           -----------
@@ -130,11 +114,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           Copy-Item "target/release/auto-ip.exe" $dir
           Copy-Item "src-tauri/target/release/auto-ip-gui.exe" $dir
-          Get-ChildItem "target/release/auto_ip.*" -File |
-              Where-Object { $_.Extension -in ".dll", ".lib" } |
-              Copy-Item -Destination $dir
-          New-Item -ItemType Directory -Force -Path (Join-Path $dir "include") | Out-Null
-          Copy-Item "include/auto_ip.h" (Join-Path $dir "include")
           @"
           Auto IP (Windows x64)
 
@@ -147,15 +126,6 @@ jobs:
           - The GUI asks for Administrator through UAC. The CLI must be started
             from an Administrator cmd/PowerShell.
           - GUI needs the WebView2 runtime (normally included with Windows 10/11).
-
-          C API
-          -----
-              auto_ip.dll         shared library
-              auto_ip.lib         static library / import library
-              include/auto_ip.h   C header
-
-          MSVC: link auto_ip.lib and keep auto_ip.dll next to the executable.
-          The C API needs Npcap and the same Administrator privileges as the CLI.
 
           First run
           ---------
