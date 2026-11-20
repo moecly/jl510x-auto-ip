@@ -10,6 +10,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use pnet::datalink::{self, Channel, Config, MacAddr, NetworkInterface};
 
+pub mod ffi;
+
 pub const ETHERTYPE_LOOP: u16 = 0x9988;
 pub const ETHERTYPE_REPLY: u16 = 0x9989;
 pub const LOOP_RESERVED: u16 = 0x0001;
@@ -414,6 +416,7 @@ fn parse_reply(frame: &[u8], nonce: u32) -> Option<Reply> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_frame(
     src: MacAddr,
     ttl: u16,

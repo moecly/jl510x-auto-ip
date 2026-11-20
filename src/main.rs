@@ -148,8 +148,8 @@ fn print_replies(summary: &RunSummary) {
     }
 
     println!(
-        "{:<5} {:<17} {:<15} {:<15} {:<5} {:<14} {}",
-        "board", "mac", "old ip", "new ip", "ttl", "status", "detail"
+        "{:<5} {:<17} {:<15} {:<15} {:<5} {:<14} detail",
+        "board", "mac", "old ip", "new ip", "ttl", "status"
     );
     for reply in &summary.boards {
         println!(
